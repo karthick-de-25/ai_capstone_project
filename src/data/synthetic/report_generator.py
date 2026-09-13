@@ -1,14 +1,15 @@
 """Synthetic clinical report generator.
 
 Generates realistic-but-fabricated patient reports with configurable
-abnormality levels.  Pure Python — no dependencies beyond the standard
-library.
+abnormality levels.  Includes weight, height, and combined BP values
+that trigger the pipeline's clinical tooling (BMI, eGFR, BP stage).
+
+Pure Python — no dependencies beyond the standard library.
 """
 
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
 from typing import Literal
 
 Variant = Literal["normal", "abnormal", "critical"]
@@ -20,10 +21,16 @@ _FIRST_NAMES = [
     "Linda Brown", "Michael Davis",
 ]
 
+# ── Vitals (triggers the BMI + BP tools) ──────────────────────────
+# weight_kg, height_m, (systolic, diastolic)
+_VITALS: dict[Variant, tuple[float, float, tuple[int, int]]] = {
+    "normal":   (70, 1.75, (115, 75)),    # BMI 22.9 → normal, BP normal
+    "abnormal": (85, 1.75, (145, 92)),    # BMI 27.8 → overweight, BP stage 2
+    "critical": (100, 1.75, (200, 120)),  # BMI 32.7 → obese, BP crisis
+}
+
 # ── Lab value templates ──────────────────────────────────────────────
 # Each entry: (display_name, unit, (normal_min, normal_max), values_by_variant)
-# The value is a single representative number for each severity level.
-
 LabDef = tuple[str, str, tuple[float, float], dict[Variant, float]]
 
 _LABS: list[LabDef] = [
@@ -44,14 +51,6 @@ _LABS: list[LabDef] = [
         {"normal": 52, "abnormal": 35, "critical": 28},
     ),
     (
-        "Blood Pressure (systolic)", "mmHg", (90, 119),
-        {"normal": 115, "abnormal": 145, "critical": 200},
-    ),
-    (
-        "Blood Pressure (diastolic)", "mmHg", (60, 79),
-        {"normal": 75, "abnormal": 92, "critical": 120},
-    ),
-    (
         "Creatinine", "mg/dL", (0.6, 1.2),
         {"normal": 0.9, "abnormal": 1.5, "critical": 2.8},
     ),
@@ -70,7 +69,7 @@ _ASSESSMENTS: dict[Variant, str] = {
     ),
 }
 
-# ── Medication templates (for abnormal/critical) ─────────────────────
+# ── Medication templates ─────────────────────────────────────────────
 _MEDICATIONS: dict[Variant, str] = {
     "normal": "None",
     "abnormal": "Metformin 1000mg BID, Atorvastatin 20mg QD, Lisinopril 10mg QD",
@@ -101,11 +100,14 @@ def generate_report(
 ) -> str:
     """Generate a synthetic clinical report.
 
+    The report includes ``Weight``, ``Height``, and a combined ``BP``
+    line so that the pipeline's ``_compute_tools_from_report`` can
+    extract them and compute BMI, eGFR, and BP stage.
+
     Parameters
     ----------
     variant:
         Severity level — ``"normal"``, ``"abnormal"``, or ``"critical"``.
-        Unknown values silently fall back to ``"normal"``.
     seed:
         Random seed for reproducible output (optional).
 
@@ -114,7 +116,6 @@ def generate_report(
     str
         A plain-text clinical report.
     """
-    # Guard: unknown variant → fall back to normal
     if variant not in ("normal", "abnormal", "critical"):
         variant = "normal"
 
@@ -125,9 +126,13 @@ def generate_report(
     age = random.randint(25, 75)
     gender = random.choice(["M", "F"])
 
+    weight, height, (sys_bp, dia_bp) = _VITALS[variant]
+
     lines = [
         f"Patient: {patient_name}, {gender}/{age}",
         f"Date: 2026-03-15",
+        f"Weight: {weight:.0f} kg, Height: {height:.2f} m",
+        f"BP: {sys_bp}/{dia_bp} mmHg",
         "",
         "Lab Results:",
     ]
