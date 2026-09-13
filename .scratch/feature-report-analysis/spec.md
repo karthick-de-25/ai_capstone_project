@@ -38,8 +38,13 @@ The output feeds into the Classifier node which routes the pipeline.
 ## Dependencies
 
 - `src/data/synthetic/` — synthetic report data generator (to be created)
-- `src/pipeline/state.py` — `ClinicalState` schema (to be created)
+- `src/pipeline/contracts.py` — `PipelineInput`/`PipelineOutput` TypedDicts (created)
 - LLM: OpenAI GPT-4o-mini
+
+## Implementation Notes (LangGraph 1.x)
+
+- Agent 1 is a `@task` function: `@task(retry_policy=RetryPolicy(max_attempts=3)) def analyze_report(report_text: str) -> str`
+- No separate classifier node — `classify_patient(analysis)` is a plain helper called from the `@entrypoint`
 
 ## Owner
 

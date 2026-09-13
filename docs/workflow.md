@@ -1,165 +1,195 @@
 # Workflow Orchestration
 
-## Pipeline Topology
+## Architecture
 
-The AI Clinical Report Summarization Assistant uses a **sequential pipeline with conditional branching** built on LangGraph's `StateGraph`.
+The AI Clinical Report Summarization Assistant uses LangGraph **1.x** (`@entrypoint` + `@task` decorators) to orchestrate a sequential 3-agent pipeline with conditional routing and human-in-the-loop.
 
-### Core Flow
+> **API note:** this project uses LangGraph 1.x (pinned in `requirements.txt`). The decorator
+> style (`@entrypoint`/`@task`) replaces the legacy `StateGraph`/`add_node`/`add_edge` API
+> from 0.2–0.3.x. Control flow (sequencing, routing) is ordinary Python inside the
+> entrypoint; `interrupt()`/`Command(resume=...)` provides the human checkpoint.
+
+## Core Flow
 
 ```
-START ──▶ Report Analysis ──▶ Classifier ──▶ Summary ──▶ HITL Check ──▶ Recommendations ──▶ END
+START
+  │
+  ▼
+[Agent 1: analyze_report] ── report_text → analysis
+  │
+  ▼
+[classify_patient] ── normal ──▶ return early
+  │ abnormal
+  ▼
+[Agent 2: generate_summary] ── analysis → summary
+  │
+  ▼
+[interrupt → human approves] ── rejected ──▶ return early
+  │ approved
+  ▼
+[Agent 3: generate_recommendations] ── analysis + summary → recommendations
+  │
+  ▼
+END
 ```
 
 ### Conditional Branches
 
 | Condition | Route | Rationale |
 |-----------|-------|-----------|
-| `classification == "normal"` | END | No abnormalities to summarize or recommend on |
-| `classification == "abnormal"` | Summary Agent | Standard path |
-| `classification == "critical"` | Alert Human (separate flow) | Requires immediate clinician attention |
-| Human rejects recommendations | END | Clinician disagrees — stop |
-| Agent failure (retries exhausted) | Fallback END | Graceful degradation |
+| `classification == "normal"` | Return early (no summary/recommendations) | No abnormalities to follow up on |
+| `classification == "abnormal"` | Continue to Summary Agent | Standard path |
+| `classification == "critical"` | Alert human (separate flow) | Requires immediate clinician attention |
+| Human rejects recommendations | Return early | Clinician disagrees — stop |
+| Task failure (retries exhausted) | Raises → propagates | Treated as an API/LLM error, surfaced to caller |
 
-## Graph Definition (LangGraph)
+## Pipeline Definition
 
 ```python
-from langgraph.graph import StateGraph, START, END
-from typing import Literal
+# src/pipeline/pipeline.py
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.func import entrypoint, task
+from langgraph.types import RetryPolicy, interrupt
 
-builder = StateGraph(ClinicalState)
+from .agents.summary import generate_summary
+from .agents.analysis import analyze_report, classify_patient
+from .agents.recommendation import generate_recommendations
+from .contracts import PipelineInput, PipelineOutput
 
-# Nodes
-builder.add_node("analyze",     analyze_report)
-builder.add_node("classify",    classify_report)
-builder.add_node("summarize",   generate_summary)
-builder.add_node("human_review", human_checkpoint)
-builder.add_node("recommend",   generate_recommendations)
-builder.add_node("alert_human", alert_human_node)
 
-# Edges
-builder.add_edge(START, "analyze")
-builder.add_edge("analyze", "classify")
+@entrypoint(checkpointer=InMemorySaver())
+def pipeline(report: PipelineInput) -> PipelineOutput:
+    # Agent 1 (parallel-ready: launch, then await)
+    analysis_future = analyze_report(report["report_text"])
+    analysis = analysis_future.result()
 
-# Conditional: after classification
-builder.add_conditional_edges(
-    "classify",
-    route_after_classification,
-    {
-        "summarize":   "summarize",
-        "alert_human": "alert_human",
-        END:           END,
-    },
-)
+    # Classifier — plain Python, no separate node needed
+    patient_class = classify_patient(analysis)
+    if patient_class == "normal":
+        return PipelineOutput(analysis=analysis, summary="", recommendations=[])
 
-# Human alert path
-builder.add_edge("alert_human", END)
+    # critical → alert human via interrupt (alternative flow)
+    if patient_class == "critical":
+        alert = interrupt({"level": "critical", "analysis": analysis})
+        if not alert.get("approved", False):
+            return PipelineOutput(analysis=analysis, summary="", recommendations=[])
 
-# Main path
-builder.add_edge("summarize", "human_review")
+    # Agent 2
+    summary = generate_summary(analysis).result()
 
-# Conditional: after human review
-builder.add_conditional_edges(
-    "human_review",
-    route_after_human_review,
-    {
-        "recommend": "recommend",
-        END:         END,
-    },
-)
+    # Human-in-the-loop checkpoint (Agent 3 is gated on approval)
+    review = interrupt({"question": "Approve recommendations?", "analysis": analysis, "summary": summary})
+    if not review.get("approved", False):
+        return PipelineOutput(analysis=analysis, summary=summary, recommendations=[])
 
-builder.add_edge("recommend", END)
+    # Agent 3
+    recommendations = generate_recommendations(analysis, summary).result()
+    return PipelineOutput(analysis=analysis, summary=summary, recommendations=recommendations)
 ```
 
-## Routing Functions
+## Agent Tasks
 
 ```python
-def route_after_classification(
-    state: ClinicalState,
-) -> Literal["summarize", "alert_human", "__end__"]:
-    """Route based on severity classification."""
-    c = state.get("classification", "abnormal")
-    if c == "normal":
-        return "__end__"
-    elif c == "critical":
-        return "alert_human"
-    else:
-        return "summarize"
+# src/pipeline/agents/analysis.py
+from langgraph.func import task
+from langgraph.types import RetryPolicy
 
-def route_after_human_review(
-    state: ClinicalState,
-) -> Literal["recommend", "__end__"]:
-    """Route based on human approval."""
-    if state.get("human_approved", False):
-        return "recommend"
-    return "__end__"
+@task(retry_policy=RetryPolicy(max_attempts=3))
+def analyze_report(report_text: str) -> str:
+    """Agent 1: extract key findings + abnormal values."""
+    ...
+
+def classify_patient(analysis: str) -> str:
+    """Plain helper — returns 'normal' | 'abnormal' | 'critical'."""
+    ...
+
+# src/pipeline/agents/summary.py
+@task(retry_policy=RetryPolicy(max_attempts=3))
+def generate_summary(analysis: str) -> str:
+    """Agent 2: concise structured clinical summary."""
+    ...
+
+# src/pipeline/agents/recommendation.py
+@task(retry_policy=RetryPolicy(max_attempts=3))
+def generate_recommendations(analysis: str, summary: str) -> list[str]:
+    """Agent 3: 3-5 actionable follow-up recommendations."""
+    ...
 ```
 
 ## Human-in-the-Loop Checkpoint
 
-Implemented via LangGraph's `interrupt` + `Command`:
+Implemented via `interrupt()` + `Command(resume=...)`:
 
-1. Pipeline executes through `summarize` node
-2. `human_checkpoint` node fires `interrupt(...)`, pausing execution
-3. User reviews analysis + summary and decides
-4. Pipeline resumes via `Command(resume={"approved": True/False})`
+1. Pipeline runs through `generate_summary`
+2. `interrupt({...})` raises `GraphInterrupt`, pausing execution; the payload is surfaced to the client
+3. Human reviews analysis + summary and decides
+4. Resume with `Command(resume={"approved": True/False})`
 
 ```python
-def human_checkpoint(state: ClinicalState) -> dict:
-    response = interrupt({
-        "question": "Approve recommendations?",
-        "analysis": state["analysis"],
-        "summary": state["summary"],
-    })
-    approved = response.get("approved", False)
-    return {"human_approved": approved, "requires_human_review": True}
+# Run the graph (e.g., from a REPL or CLI): first invocation hits the interrupt
+config = {"configurable": {"thread_id": "patient-001"}}
+for chunk in pipeline.stream({"report_text": report_text}, config):
+    print(chunk)
+# → {'__interrupt__': (Interrupt(value={'question': ...}, id='...'),)}
+
+# Human approves → resume
+result = pipeline.invoke(Command(resume={"approved": True}), config)
 ```
 
-## Parallel Execution (Future Enhancement)
+Key facts (verified against langgraph 1.2.11):
+- `interrupt` requires a checkpointer — pass `checkpointer=InMemorySaver()` to `@entrypoint`
+- The payload is surfaced as `{'__interrupt__': (Interrupt(value=..., id=...),)}`
+- Resuming re-executes the entrypoint, but completed `@task` results are cached by the checkpointer (`InMemorySaver`) — they are *not* re-run
+- `Command` supports `resume=`, `update=`, `goto=`, and `graph=`
 
-The pipeline is **sequential** by design (each agent depends on the previous output). However, there is an opportunity for parallel execution inside the RAG retrieval layer:
+## Parallel Execution
 
+Tasks are async-friendly by default. Launch all futures before awaiting:
+
+```python
+# Fan-out: analyze each section in parallel
+futures = [analyze_section(section) for section in sections]
+results = [f.result() for f in futures]  # all run concurrently
 ```
-User Query
-    │
-    ├──▶ ChromaDB Retriever (dense)
-    ├──▶ BM25 Retriever (sparse)
-    └──▶ LLM Re-ranker
-    │
-    └──▶ Ensemble Fusion ▶▶ LLM Response
-```
 
-This uses LangChain's `EnsembleRetriever` for hybrid search.
+Or in the RAG layer (LangChain 1.x LCEL):
+
+```python
+from langchain_core.runnables import RunnableParallel
+
+rag_chain = (
+    RunnableParallel({"context": retriever, "question": RunnablePassthrough()})
+    | prompt
+    | llm
+    | StrOutputParser()
+)
+```
 
 ## Error Handling & Retries
 
-```
-Agent Node
-    │
-    ├── success ▶ next node
-    │
-    └── failure (error appended to state.errors)
-        │
-        ├── retry_count < 3 ▶ retry node
-        └── retry_count >= 3 ▶ fallback output + END
-```
+- `@task(retry_policy=RetryPolicy(max_attempts=3))` retries transient failures (network,
+  rate-limit) with exponential backoff before giving up
+- Exceptions propagate to the entrypoint caller once retries are exhausted
+- `RetryPolicy` fields: `max_attempts` (default 3), `initial_interval`, `backoff_factor`,
+  `max_interval`, `jitter`, `retry_on` (exception types/callable)
+- Not all errors should retry: set `retry_on=(TimeoutError, RateLimitError)` explicitly so
+  invalid-input errors (e.g. `ValueError`) fail fast
 
 ## Logging & Monitoring
 
-Every node logs via Python's `logging` module:
+Every agent task logs via Python's `logging` module:
 
 ```python
 import logging
 log = logging.getLogger(__name__)
 
-def analyze_report(state):
+@task
+def analyze_report(report_text: str) -> str:
     log.info("Agent 1: Analyzing report...")
-    # ... work ...
-    log.info(f"Analysis complete. {len(state['analysis'])} chars")
+    result = llm.invoke(prompt)
+    log.info("Agent 1: complete (%d chars)", len(result.content))
+    return result.content
 ```
 
-Logged events:
-- Node entry/exit
-- Classification result
-- Human checkpoint triggered
-- Errors and retries
-- Pipeline completion
+Logged events: task entry/exit, classification result, interrupt triggered/resumed,
+retries, pipeline completion.

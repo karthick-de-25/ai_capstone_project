@@ -5,16 +5,15 @@
 
 ## Description
 
-Implement the `generate_recommendations` LangGraph node function. This is Agent 3 in the pipeline.
+Implement the `generate_recommendations` LangGraph 1.x `@task` function. This is Agent 3 in the pipeline.
 
 ## Requirements
 
-- Function signature: `generate_recommendations(state: ClinicalState) -> dict`
-- Only called after human approval (`state.human_approved == True`)
+- Function signature: `@task(retry_policy=RetryPolicy(max_attempts=3)) def generate_recommendations(analysis: str, summary: str) -> list[str]`
+- Only called after human approval (the entrypoint gates this behind `interrupt(...)`)
 - Calls ChatOpenAI with the recommendation system prompt
 - Parses LLM output into `list[str]` (3-5 items)
-- Returns `{"recommendations": list[str]}`
-- Returns fallback list on error
+- Returns the list on success; raises on failure
 
 ## File location
 
@@ -23,6 +22,6 @@ Implement the `generate_recommendations` LangGraph node function. This is Agent 
 ## Acceptance
 
 ```python
-result = generate_recommendations({"analysis": "High glucose", "summary": "⚠️ Glucose high"})
-assert 3 <= len(result["recommendations"]) <= 5
+result = generate_recommendations("High glucose", "⚠️ Glucose high")
+assert 3 <= len(result) <= 5
 ```

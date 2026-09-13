@@ -14,14 +14,16 @@ The capstone requires a RAG pipeline that retrieves relevant medical guideline c
 
 ## Decision
 
-Use **LangChain** for document loading, splitting, and retrieval, with **ChromaDB** as the persistent vector store.
+Use **LangChain 1.x** for document loading, splitting, and retrieval, with **ChromaDB** as the persistent vector store.
 
-- **Loader:** `PyPDFLoader` for medical guideline PDFs
-- **Splitter:** `RecursiveCharacterTextSplitter` (chunk_size=1000, overlap=200)
-- **Embeddings:** `OpenAIEmbeddings` (model `text-embedding-3-small`)
-- **Vector Store:** `Chroma` (persistent to `./chroma_db/`)
-- **Retrieval:** `create_retrieval_chain` with `create_stuff_documents_chain` for simple Q&A
-- **Ensemble:** `EnsembleRetriever` with BM25 for hybrid search (future enhancement)
+- **Loader:** `langchain_community.document_loaders.PyPDFLoader` for medical guideline PDFs
+- **Splitter:** `langchain_text_splitters.RecursiveCharacterTextSplitter` (chunk_size=1000, overlap=200)
+- **Embeddings:** `langchain_openai.OpenAIEmbeddings` (model `text-embedding-3-small`)
+- **Vector Store:** `langchain_chroma.Chroma` (persistent to `./chroma_db/`)
+- **Composition:** LangChain 1.x LCEL style — `RunnableParallel` (retriever + question) → `ChatPromptTemplate` → `ChatOpenAI` → `StrOutputParser`
+  (`langchain.chains.create_retrieval_chain` was removed in 1.x — we use LCEL directly)
+- **Ensemble / multi-query retrieval (future):** `langchain_classic.retrievers.MultiQueryRetriever` / `EnsembleRetriever` (the `langchain_classic` compat package ships with `langchain-community`)
+- **FAISS (alternative):** `langchain_faiss` wrapper when an in-memory vector store is preferred
 
 ## Consequences
 
@@ -29,8 +31,9 @@ Use **LangChain** for document loading, splitting, and retrieval, with **ChromaD
 - **Positive:** ChromaDB persists to disk — no re-embedding on restart
 - **Positive:** Easy to swap to FAISS for performance testing
 - **Positive:** Metadata filtering enables report-type-specific retrieval
-- **Negative:** LangChain ecosystem is large; we only use a subset (loaders, splits, retriever, chains)
-- **Mitigation:** Import only what's needed; no `langchain[all]` dependency
+- **Negative:** LangChain 1.x splits integrations into standalone packages (splitters, Chroma, community) — we import from each specific package; no `langchain[all]`
+- **Negative:** `langchain-community` is in sunset mode (0.4.x, no 1.x) — `PyPDFLoader`/`BM25Retriever` still work today; long-term migration target is standalone packages
+- **Mitigation:** Import only what's needed per package; keep RAG imports isolated in the RAG module so they are swappable
 
 ## Alternatives Considered
 

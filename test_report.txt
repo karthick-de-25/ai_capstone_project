@@ -1,0 +1,16 @@
+Patient: Robert Patel, F/34
+Date: 2026-03-15
+
+Lab Results:
+- Glucose (fasting): 180.0 mg/dL  (high, normal: 70-110)
+- HbA1c: 8.2 %  (high, normal: 4-5.6)
+- LDL: 160.0 mg/dL  (high, normal: 0-99)
+- HDL: 35.0 mg/dL  (low, normal: 40-60)
+- Blood Pressure (systolic): 145.0 mmHg  (high, normal: 90-119)
+- Blood Pressure (diastolic): 92.0 mmHg  (high, normal: 60-79)
+- Creatinine: 1.5 mg/dL  (high, normal: 0.6-1.2)
+
+Assessment:
+  Uncontrolled type 2 diabetes with hyperlipidemia and hypertension. Medication adjustment recommended.
+
+Current medications: Metformin 1000mg BID, Atorvastatin 20mg QD, Lisinopril 10mg QD

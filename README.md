@@ -33,8 +33,8 @@ Report ──▶ Analysis Agent ──▶ Classifier ──▶ Summary Agent ─
 
 | Layer | Tool |
 |-------|------|
-| Agent Framework | [LangGraph](https://github.com/langchain-ai/langgraph) |
-| RAG | [LangChain](https://github.com/langchain-ai/langchain) |
+| Agent Framework | [LangGraph](https://github.com/langchain-ai/langgraph) 1.x (`@entrypoint`/`@task`) |
+| RAG | [LangChain](https://github.com/langchain-ai/langchain) 1.x (LCEL) |
 | LLM | OpenAI GPT-4o-mini |
 | Vector DB | ChromaDB (persistent) / FAISS (in-memory) |
 | Embeddings | OpenAI `text-embedding-3-small` |

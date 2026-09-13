@@ -12,7 +12,7 @@ A multi-agent system that helps doctors quickly understand clinical reports by a
 | **Report Analysis Agent** | Agent 1. Ingests a raw clinical report and extracts key findings, abnormal values, and notable observations. |
 | **Summary Agent** | Agent 2. Takes the analysis output and produces a concise, structured clinical summary. |
 | **Recommendation Agent** | Agent 3. Generates actionable follow-up recommendations based on the analysis and summary. |
-| **Pipeline** | The directed graph of agents executing sequentially: Analysis → Summary → Recommendation. |
+| **Pipeline** | The directed sequence of `@task` functions orchestrated by an `@entrypoint`: Analysis → Summary → Recommendation. |
 | **Human-in-the-Loop (HITL)** | A checkpoint that pauses pipeline execution for a human clinician to review and approve before recommendations are generated. |
 | **Classification** | The severity label assigned after analysis: `normal`, `abnormal`, or `critical`. Controls conditional routing. |
 | **RAG Pipeline** | Retrieval-Augmented Generation — retrieves relevant medical guideline chunks from a vector store and injects them into the LLM prompt for context. |
@@ -61,7 +61,7 @@ A multi-agent system that helps doctors quickly understand clinical reports by a
 
 | Layer | Choice | Rationale |
 |-------|--------|-----------|
-| Agent Framework | LangGraph | StateGraph with checkpoints, interrupts for HITL, conditional edges |
+| Agent Framework | LangGraph 1.x | `@entrypoint`/`@task` decorators, `interrupt`/`Command` for HITL, `RetryPolicy`, checkpoints via `InMemorySaver` |
 | LLM | OpenAI GPT-4o-mini | Cost-effective for capstone; swap to Gemini via `langchain-google-genai` |
 | RAG | LangChain | Document loaders, splitters, retrieval chains |
 | Vector DB | ChromaDB | Persistent, simple setup, metadata filtering |
@@ -98,7 +98,11 @@ See `docs/adr/` for full rationale:
 │       ├── langgraph/     ← LangGraph skill (agent orchestration)
 │       ├── feature-plan/
 │       └── feature-implement/
-└── src/                    ← (to be created) Application code
+└── src/                    ← Application code (baseline created)
+    ├── __init__.py
+    └── pipeline/
+        ├── __init__.py
+        └── contracts.py       ← PipelineInput / PipelineOutput TypedDicts
 ```
 
 ## Design Constraints

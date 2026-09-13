@@ -1,28 +1,37 @@
 # AI Clinical Report Summarization Assistant
 # Core dependencies
-
-# --- LangChain Ecosystem ---
-langchain>=0.3.0
-langchain-community>=0.3.0
-langchain-openai>=0.2.0
-langchain-chroma>=0.2.0
-langchain-google-genai>=2.0.0    # Optional: for Gemini
+#
+# NOTE: LangGraph 1.x requires langchain-core >=1.4.7,<2 and Python >=3.10.
+# The langgraph/entrypoint + task decorator API is used in this project.
+# langchain-community has no 1.x release yet (0.4.2) — if needed, install
+# explicit community modules separately (deferred to the RAG step).
 
 # --- LangGraph (Agent Orchestration) ---
-langgraph>=0.3.0
+langgraph==1.2.11                 # API: @entrypoint / @task decorators
+langgraph-checkpoint>=4.1.0,<5.0  # InMemorySaver etc. (HITL checkpoint, later steps)
 
-# --- Vector Stores ---
-chromadb>=0.5.0
-faiss-cpu>=1.8.0
-
-# --- Document Loaders ---
-pypdf>=5.0.0
-python-docx>=1.1.0
+# --- LangChain Ecosystem (LangGraph 1.x-compatible) ---
+langchain-core>=1.4.7,<2.0
+langchain>=1.0.0
+langchain-openai>=1.6.0
+langchain-chroma>=1.0.0           # RAG step
+langchain-text-splitters>=1.0.0   # RAG step: text splitters
+langchain-google-genai>=1.0.0     # Optional: for Gemini
 
 # --- LLM Clients ---
-openai>=1.0.0
+openai>=1.40.0
+
+# --- Vector Stores (RAG step) ---
+chromadb>=0.5.0
+faiss-cpu>=1.8.0
+# langchain-faiss is still an empty/alpha package (0.1.x) — FAISS comes from
+# langchain_community.vectorstores for now; migration target is a standalone package.
+
+# --- Document Loaders (RAG step) ---
+pypdf>=5.0.0
+python-docx>=1.1.0
 
 # --- Utilities ---
 tiktoken>=0.7.0
 python-dotenv>=1.0.0
-pydantic>=2.0.0
+pydantic>=2.7.0

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Three agents execute sequentially in a LangGraph StateGraph pipeline. Each agent has a distinct role, system prompt, input/output contract, and error behavior.
+Three agents execute sequentially, orchestrated by a LangGraph 1.x `@entrypoint` calling `@task`-decorated functions. Each agent has a distinct role, system prompt, input/output contract, and error behavior.
 
 ---
 
@@ -18,12 +18,12 @@ Three agents execute sequentially in a LangGraph StateGraph pipeline. Each agent
 |-------|------|-------------|
 | `report_text` | `string` | Raw clinical report text (lab results, physician notes, patient info) |
 
-### Output (appended to state)
+### Output (returned to the entrypoint)
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `analysis` | `string` | Structured analysis: key findings, abnormal values, impressions |
-| `classification` | `string` | Severity label: `normal`, `abnormal`, or `critical` (set by classifier node) |
+| `classification` | `string` | Severity label: `normal`, `abnormal`, or `critical` (set by classifier logic in the entrypoint) |
 
 ### System Prompt
 
@@ -35,11 +35,12 @@ Report:
 {report_text}
 ```
 
-### Error Handling
+"""Agent 1 — return the analysis string; errors surface as an exception.
+Classification is decided by the entrypoint after this returns."""
 
-- Catches LLM failures → returns `"Analysis unavailable due to error."`
-- Appends error to `state.errors[]`
-- Retry node loops up to 3 times on failure
+@task(retry_policy=RetryPolicy(max_attempts=3))
+def analyze_report(report_text: str) -> str:
+    ...
 
 ### Tests
 
@@ -61,7 +62,7 @@ Report:
 |-------|------|--------|
 | `analysis` | `string` | Output of Agent 1 |
 
-### Output (appended to state)
+### Output (returned to the entrypoint)
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -87,10 +88,11 @@ Analysis:
 - Abnormal values **bolded** or marked with `⚠️`
 - No new information — summarize only what's in the analysis
 
-### Error Handling
+"""Agent 2 — return the summary string; errors surface as an exception."""
 
-- Catches LLM failures → returns `"Summary unavailable due to error."`
-- Appends error to `state.errors[]`
+@task(retry_policy=RetryPolicy(max_attempts=3))
+def generate_summary(analysis: str) -> str:
+    ...
 
 ### Tests
 
@@ -113,7 +115,7 @@ Analysis:
 | `analysis` | `string` | Output of Agent 1 |
 | `summary` | `string` | Output of Agent 2 |
 
-### Output (appended to state)
+### Output (returned to the entrypoint)
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -141,10 +143,11 @@ Recommendations (one per line, prefixed with '-'):
 - Actionable, specific (not generic)
 - Based **only** on the analysis + summary content
 
-### Error Handling
+"""Agent 3 — return a list of recommendations; errors surface as an exception."""
 
-- Catches LLM failures → returns `["Unable to generate recommendations due to an error."]`
-- Appends error to `state.errors[]`
+@task(retry_policy=RetryPolicy(max_attempts=3))
+def generate_recommendations(analysis: str, summary: str) -> list[str]:
+    ...
 
 ### Tests
 
@@ -154,30 +157,56 @@ Recommendations (one per line, prefixed with '-'):
 
 ---
 
-## Agent State Schema (LangGraph)
+## Contract Schema (LangGraph 1.x)
+
+LangGraph 1.x uses a decorator style — data flows through task arguments and return
+values, so there is no mutable shared-state dict. The contracts live in
+`src/pipeline/contracts.py`:
 
 ```python
-from typing import TypedDict, Annotated
-import operator
+from typing import TypedDict
 
-class ClinicalState(TypedDict):
-    # Input
+class PipelineInput(TypedDict):
+    """What enters the pipeline: one raw clinical report."""
     report_text: str
 
-    # Agent outputs (populated sequentially)
+class PipelineOutput(TypedDict):
+    """What the pipeline produces: analysis → summary → recommendations."""
     analysis: str
-    classification: str          # normal | abnormal | critical
     summary: str
     recommendations: list[str]
-
-    # Human-in-the-loop
-    requires_human_review: bool
-    human_approved: bool
-
-    # Error handling
-    retry_count: int
-    errors: Annotated[list[str], operator.add]   # Accumulates across nodes
 ```
+
+## Pipeline Orchestration
+
+```python
+from langgraph.func import entrypoint
+from langgraph.checkpoint.memory import InMemorySaver
+
+@entrypoint(checkpointer=InMemorySaver())
+def pipeline(report: PipelineInput) -> PipelineOutput:
+    analysis = analyze_report(report["report_text"]).result()
+
+    if classify_patient(analysis) == "normal":
+        return PipelineOutput(analysis=analysis, summary="", recommendations=[])
+
+    summary = generate_summary(analysis).result()
+    approved = interrupt({"question": "Approve recommendations?", "analysis": analysis, "summary": summary})
+
+    if not approved:
+        return PipelineOutput(analysis=analysis, summary=summary, recommendations=[])
+
+    recommendations = generate_recommendations(analysis, summary).result()
+    return PipelineOutput(analysis=analysis, summary=summary, recommendations=recommendations)
+```
+
+### Notes
+
+- Each `@task` call returns a future; `.result()` resolves it. Launch several
+  before awaiting to run them in parallel.
+- `interrupt(...)` pauses the graph until a client resumes with `Command(resume=...)`
+  — the human-in-the-loop checkpoint.
+- `RetryPolicy` on `@task` replaces the old manual retry loop (max 3 attempts).
 
 ## Pipeline Flow
 
@@ -185,23 +214,22 @@ class ClinicalState(TypedDict):
 START
   │
   ▼
-[Agent 1: Report Analysis]
+[Agent 1: analyze_report]
   │
   ▼
-[Classifier Node] ──normal──▶ END
-  │                          (skip summary + recommendations)
+[classify_patient] ──normal──▶ return early (skip summary + recommendations)
   │ abnormal
   ▼
-[Agent 2: Summary]
+[Agent 2: generate_summary]
   │
   ▼
-[Human Checkpoint] ──rejected──▶ END
+[interrupt → human approves] ──rejected──▶ return early
   │ approved
   ▼
-[Agent 3: Recommendation]
+[Agent 3: generate_recommendations]
   │
   ▼
-  END
+END
 ```
 
 The **critical** path (classified as `critical`) routes to an alert-human alternative flow instead of the normal pipeline path.
