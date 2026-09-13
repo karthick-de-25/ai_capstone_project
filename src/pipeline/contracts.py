@@ -11,13 +11,18 @@ Field names intentionally align with ``agent.md`` and the feature specs in
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class PipelineInput(TypedDict):
-    """What enters the pipeline: one raw clinical report."""
+    """What enters the pipeline: one raw clinical report.
+
+    ``previous_summary`` is optional — set it when chaining multiple
+    reports for the same patient to enable cross-report memory.
+    """
 
     report_text: str
+    previous_summary: NotRequired[str | None]
 
 
 class PipelineOutput(TypedDict):

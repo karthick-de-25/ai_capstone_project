@@ -2,3 +2,6 @@ guidelines.md
 .pi
 .env
 .venv
+
+*.pyc
+**/*.pyc

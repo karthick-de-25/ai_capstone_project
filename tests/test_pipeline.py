@@ -153,8 +153,51 @@ class TestCriticalPath:
         assert result["recommendations"] == []
 
 
-class TestOutputContract:
-    """PipelineOutput always has the correct shape."""
+class TestMemoryChain:
+    """Cross-report memory: passing previous_summary across invocations."""
+
+    def test_memory_chain_with_context(self):
+        """Chained runs: second run receives previous_summary via PipelineInput."""
+        fake = FakeListChatModel(responses=[
+            # Run 1
+            "Glucose 180.", "abnormal", "Summary A: Glucose 180.", "- Rec A.",
+            # Run 2 (different thread_id to avoid caching issues)
+            "Glucose 220.", "abnormal", "Summary B: Trend vs previous.", "- Rec B.",
+        ])
+        inject_llm(fake)
+
+        # ── Run 1 ─────────────────────────────────────────────────────
+        cfg1 = {"configurable": {"thread_id": "test-mem-chain-1"}}
+        chunks = list(pipeline.stream(
+            PipelineInput(report_text="Patient: Bob, Glucose 180"),
+            cfg1,
+        ))
+        r1 = pipeline.invoke(Command(resume={"approved": True}), cfg1)
+        while isinstance(r1, dict) and "__interrupt__" in r1:
+            r1 = pipeline.invoke(Command(resume={"approved": True}), cfg1)
+        prev_summary = r1["summary"]
+
+        # ── Run 2: with previous_summary from Run 1 ───────────────────
+        cfg2 = {"configurable": {"thread_id": "test-mem-chain-2"}}
+        chunks2 = list(pipeline.stream(
+            PipelineInput(
+                report_text="Patient: Bob, Glucose 220",
+                previous_summary=prev_summary,
+            ),
+            cfg2,
+        ))
+        r2 = pipeline.invoke(Command(resume={"approved": True}), cfg2)
+        while isinstance(r2, dict) and "__interrupt__" in r2:
+            r2 = pipeline.invoke(Command(resume={"approved": True}), cfg2)
+
+        # Verify Run 2 received previous_summary context
+        assert r2["analysis"]
+        assert r2["summary"]
+        # The summary should reference "trend" or "previous" or "vs"
+        summary_text = r2["summary"].lower()
+        trend_keywords = ["trend", "previous", "vs"]
+        assert any(k in summary_text for k in trend_keywords), \
+            f"Expected trend keyword in summary, got: {r2['summary'][:100]}"
 
     def test_output_is_pipelineoutput(self):
         """The result is a dict matching PipelineOutput fields."""

@@ -31,7 +31,8 @@ def pipeline(report: PipelineInput) -> PipelineOutput:
        - **normal** → return early (skip summary + recommendations).
        - **critical** → ``interrupt()`` for an alert-human checkpoint, then
          optionally continue.
-    3. ``generate_summary`` — Agent 2 produces a structured clinical summary.
+    3. ``generate_summary`` — Agent 2 produces a structured clinical summary
+       (includes ``Trend vs Previous`` when ``previous_summary`` is provided).
     4. ``interrupt()`` — human-in-the-loop checkpoint (approve recommendations?).
        - **rejected** → return early.
     5. ``generate_recommendations`` — Agent 3 produces 3–5 action items.
@@ -61,7 +62,8 @@ def pipeline(report: PipelineInput) -> PipelineOutput:
             return PipelineOutput(analysis=analysis, summary="", recommendations=[])
 
     # ── Agent 2 ───────────────────────────────────────────────────────
-    summary = generate_summary(analysis).result()
+    prev = report.get("previous_summary")
+    summary = generate_summary(analysis, previous_summary=prev).result()
 
     # ── Human-in-the-loop checkpoint (gate Agent 3) ──────────────────
     review = interrupt({
