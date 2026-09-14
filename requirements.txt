@@ -36,5 +36,6 @@ tiktoken>=0.7.0
 
 # --- Web UI (Demo) ---
 flask>=3.0
+gunicorn>=21.2.0
 python-dotenv>=1.0.0
 pydantic>=2.7.0
