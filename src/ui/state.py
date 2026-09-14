@@ -10,8 +10,9 @@ Only one state manager instance exists (module-level singleton).
 
 from __future__ import annotations
 
+import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 from langgraph.types import Command
@@ -36,11 +37,34 @@ class ThreadState:
     output: PipelineOutput | None = None
     error: str | None = None
     config: dict | None = None
+    current_step: str = "initial"  # initial | analysis | classification | summary | recommendations | done
+
+
+# ── Clinical metrics extraction ────────────────────────────────────
+
+
+def extract_clinical_metrics(analysis_text: str) -> dict[str, str]:
+    """Parse ``[Tool]`` lines from the analysis text.
+
+    Returns a dict like ``{"BMI": "27.8 (overweight)", "eGFR": "...", "BP": "..."}``.
+    """
+    metrics: dict[str, str] = {}
+    for m in re.finditer(r"\[Tool\]\s*(.+?):\s*(.+)", analysis_text):
+        key = m.group(1).strip()
+        val = m.group(2).strip()
+        metrics[key] = val
+    return metrics
 
 
 # ── State manager ──────────────────────────────────────────────────
 
 _threads: dict[str, ThreadState] = {}
+_THREAD_ID_PREFIX = "demo"
+
+
+def _next_thread_id() -> str:
+    """Generate a short unique thread ID."""
+    return f"{_THREAD_ID_PREFIX}-{uuid.uuid4().hex[:6]}"
 
 
 def _run_until_interrupt_or_done(
@@ -64,17 +88,19 @@ def _run_until_interrupt_or_done(
     )
 
     if resume_value is None:
-        # First invocation — stream until first interrupt (or completion)
+        # First invocation: analysis is about to run
+        ts.current_step = "analysis"
         for chunk in pipeline.stream(inp, cfg):
             if _detect_interrupt(chunk, ts):
+                _set_step_from_interrupt(ts)
                 return
-        # No interrupt — pull final result from last chunk
+        # No interrupt — pipeline completed normally
+        ts.current_step = "done"
         ts.output = _extract_output(cfg, inp) or PipelineOutput(
             analysis="", summary="", recommendations=[]
         )
         ts.status = "complete"
     else:
-        # Resume after interrupt — invoke with Command
         _resume_and_continue(ts, resume_value, cfg)
 
 
@@ -85,6 +111,17 @@ def _detect_interrupt(chunk: object, ts: ThreadState) -> bool:
         ts.status = "interrupt"
         return True
     return False
+
+
+def _set_step_from_interrupt(ts: ThreadState) -> None:
+    """Set ``current_step`` based on the interrupt payload type."""
+    payload = ts.interrupt_payload or {}
+    if payload.get("level") == "critical":
+        ts.current_step = "summary"  # summary is next after critical alert
+    elif payload.get("question"):
+        ts.current_step = "recommendations"  # recommendations are next
+    else:
+        ts.current_step = "analysis"
 
 
 def _extract_output(cfg: dict, inp: PipelineInput) -> PipelineOutput | None:
@@ -105,52 +142,60 @@ def _resume_and_continue(
     cfg: dict,
 ) -> None:
     """Resume pipeline after an interrupt, checking for further interrupts."""
+    # Mark step based on what's about to run
+    payload = ts.interrupt_payload or {}
+    if payload.get("level") == "critical":
+        ts.current_step = "summary"
+    elif payload.get("question"):
+        ts.current_step = "recommendations"
+
     result = pipeline.invoke(Command(resume=resume_value), cfg)
 
-    # The result might be another interrupt (multi-interrupt path:
-    # critical alert -> approve -> summary -> recommendations interrupt)
+    # Check for another interrupt
     if isinstance(result, dict) and "__interrupt__" in result:
         ts.interrupt_payload = result["__interrupt__"][0].value
         ts.status = "interrupt"
+        _set_step_from_interrupt(ts)
         return
 
-    # If it's our PipelineOutput dict, we're done
+    # Check for pipeline output
     if isinstance(result, dict) and "analysis" in result:
         ts.output = PipelineOutput(
             analysis=result.get("analysis", ""),
             summary=result.get("summary", ""),
             recommendations=result.get("recommendations", []),
         )
+        ts.current_step = "done"
         ts.status = "complete"
         return
 
-    # Another edge: maybe we got back an intermediate dict with __interrupt__
-    # buried inside (the LangGraph Command API can return dicts on invoke)
+    # Check for interrupt buried inside a dict
     if isinstance(result, dict):
-        # Check if this is actually the pipeline output
         if "analysis" in result:
             ts.output = PipelineOutput(
                 analysis=result.get("analysis", ""),
                 summary=result.get("summary", ""),
                 recommendations=result.get("recommendations", []),
             )
+            ts.current_step = "done"
             ts.status = "complete"
             return
-        # Check for interrupt in the result
-        for _k, _v in result.items():
+        for _v in result.values():
             if isinstance(_v, list) and len(_v) > 0:
                 item = _v[0]
                 if hasattr(item, "value") and isinstance(item.value, dict):
                     ts.interrupt_payload = item.value
                     ts.status = "interrupt"
+                    _set_step_from_interrupt(ts)
                     return
 
-    # Fallback: treat as complete with whatever we got
+    # Fallback: treat as complete
     ts.output = PipelineOutput(
         analysis=str(result) if result else "",
         summary="",
         recommendations=[],
     )
+    ts.current_step = "done"
     ts.status = "complete"
 
 
@@ -166,7 +211,7 @@ def start_thread(
     The pipeline runs until the first interrupt (or completion).  Call
     ``resume_thread()`` if the thread status is ``"interrupt"``.
     """
-    thread_id = str(uuid.uuid4())[:8]
+    thread_id = _next_thread_id()
     ts = ThreadState(
         thread_id=thread_id,
         report_text=report_text,

@@ -39,15 +39,27 @@
         .alert-error { background: #f8d7da; border: 1px solid #f5c6cb; color: #721c24; }
         .meta { font-size: 0.8rem; color: #6b7280; margin-bottom: 8px; }
         .meta small { display: block; margin-top: 4px; }
-        .pipeline-flow { display: flex; gap: 4px; align-items: center; font-size: 0.8rem; color: #6b7280; margin: 12px 0; padding: 8px 12px; background: #f3f4f6; border-radius: 6px; }
-        .pipeline-flow .step { padding: 2px 8px; border-radius: 4px; }
-        .pipeline-flow .step-done { background: #d4edda; color: #155724; font-weight: 500; }
-        .pipeline-flow .step-current { background: #fef3cd; color: #856404; font-weight: 600; }
-        .pipeline-flow .step-pending { color: #9ca3af; }
         .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #fef3cd; border-top-color: #856404; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; margin-right: 6px; }
         @keyframes spin { to { transform: rotate(360deg); } }
         .synth-select { padding: 6px 12px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 0.875rem; }
         .synth-select:focus { outline: none; border-color: #6366f1; }
+
+        /* ── Step progress bar ─────────────────────────────── */
+        .step-bar { display: flex; gap: 0; align-items: center; margin: 12px 0; padding: 0; background: #f3f4f6; border-radius: 8px; overflow: hidden; }
+        .step-bar .step { flex: 1; padding: 10px 8px; text-align: center; font-size: 0.8rem; font-weight: 500; position: relative; }
+        .step-bar .step + .step { border-left: 1px solid #e5e7eb; }
+        .step-bar .step-done { background: #d4edda; color: #155724; }
+        .step-bar .step-done::after { content: " ✓"; }
+        .step-bar .step-current { background: #fef3cd; color: #856404; font-weight: 700; }
+        .step-bar .step-current .pulse { display: inline-block; width: 8px; height: 8px; background: #856404; border-radius: 50%; margin-right: 4px; animation: pulse 1s ease-in-out infinite; vertical-align: middle; }
+        @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+        .step-bar .step-pending { color: #9ca3af; background: #f9fafb; }
+
+        /* ── Clinical metrics card ─────────────────────────── */
+        .metrics-card { display: flex; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+        .metric-item { flex: 1; min-width: 180px; padding: 14px 16px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; }
+        .metric-item .metric-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; color: #166534; }
+        .metric-item .metric-value { font-size: 1.1rem; font-weight: 700; color: #14532d; margin-top: 2px; }
     </style>
 </head>
 <body>
@@ -69,19 +81,31 @@
         {% if ts.status == "running" %}
             <span class="badge badge-running"><span class="spinner"></span> Running</span>
             <p>Pipeline is executing. Auto-refreshing every 2 seconds...</p>
+
+            <div class="step-bar">
+                <span class="step step-current"><span class="pulse"></span> Analysis</span>
+                <span class="step step-pending">Classification</span>
+                <span class="step step-pending">Summary</span>
+                <span class="step step-pending">Recommendations</span>
+            </div>
+
             <a href="{{ url_for('status', thread_id=ts.thread_id) }}" class="btn btn-secondary">Refresh Now</a>
 
         {% elif ts.status == "interrupt" %}
             <span class="badge badge-interrupt">✋ Awaiting Approval</span>
 
-            <div class="pipeline-flow">
-                <span class="step step-done">Analysis</span>
-                <span>&rarr;</span>
-                <span class="step step-done">Classification</span>
-                <span>&rarr;</span>
-                <span class="step step-done">Summary</span>
-                <span>&rarr;</span>
-                <span class="step step-current">Recommendations</span>
+            {% set step_names = {
+                "analysis": ["done", "done", "pending", "pending"],
+                "summary": ["done", "done", "current", "pending"],
+                "recommendations": ["done", "done", "done", "current"],
+            } %}
+            {% set s = step_names.get(ts.current_step, ["done", "done", "pending", "pending"]) %}
+
+            <div class="step-bar">
+                <span class="step step-{{ s[0] }}">Analysis{% if s[0] == "done" %} ✓{% endif %}</span>
+                <span class="step step-{{ s[1] }}">Classification{% if s[1] == "done" %} ✓{% endif %}</span>
+                <span class="step step-{{ s[2] }}">Summary{% if s[2] == "current" %} <span class="pulse"></span>{% endif %}</span>
+                <span class="step step-{{ s[3] }}">Recommendations{% if s[3] == "current" %} <span class="pulse"></span>{% endif %}</span>
             </div>
 
             <div class="interrupt-box">
@@ -111,17 +135,35 @@
         {% elif ts.status == "complete" %}
             <span class="badge badge-complete">✓ Complete</span>
 
-            <div class="pipeline-flow">
-                <span class="step step-done">Analysis</span>
-                <span>&rarr;</span>
-                <span class="step step-done">Classification</span>
-                <span>&rarr;</span>
-                <span class="step step-done">Summary</span>
-                <span>&rarr;</span>
-                <span class="step step-done">Recommendations</span>
+            {% set out = ts.output %}
+            {% set has_summary = out and out.get("summary") and out.summary.strip() %}
+            {% set has_recs = out and out.get("recommendations") and out.recommendations %}
+
+            <div class="step-bar">
+                <span class="step step-done">Analysis ✓</span>
+                <span class="step step-done">Classification ✓</span>
+                <span class="step {{ 'step-pending' if not has_summary else 'step-done' }}">Summary{{ ' ✓' if has_summary else '' }}</span>
+                <span class="step {{ 'step-pending' if not has_recs else 'step-done' }}">Recommendations{{ ' ✓' if has_recs else '' }}</span>
             </div>
 
-            {% set out = ts.output %}
+            {% if has_summary and not has_recs %}
+                <p class="meta">(Normal variant — early exit after classification; no summary/recommendations.)</p>
+            {% endif %}
+
+            {# ── Clinical metrics card (Change 1) ── #}
+            {% if metrics and metrics.keys()|length > 0 %}
+            <div class="section">
+                <div class="section-title">🧬 Clinical Metrics <span style="font-weight:400;font-size:0.85rem;color:#6b7280;">(computed by clinical tools)</span></div>
+                <div class="metrics-card">
+                    {% for key, val in metrics.items() %}
+                    <div class="metric-item">
+                        <div class="metric-label">{{ key }}</div>
+                        <div class="metric-value">{{ val }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
 
             {% if out and out.get("analysis") %}
             <div class="section">
@@ -130,14 +172,14 @@
             </div>
             {% endif %}
 
-            {% if out and out.get("summary") %}
+            {% if has_summary %}
             <div class="section">
                 <div class="section-title">📄 Summary</div>
                 <div class="section-content">{{ out.summary }}</div>
             </div>
             {% endif %}
 
-            {% if out and out.get("recommendations") %}
+            {% if has_recs %}
             <div class="section">
                 <div class="section-title">💡 Recommendations</div>
                 <ul class="rec-list">
@@ -148,8 +190,8 @@
             </div>
             {% endif %}
 
-            {% if not out or (not out.analysis and not out.summary and not out.recommendations) %}
-                <p class="meta">(Normal variant — no summary or recommendations generated.)</p>
+            {% if not has_summary and not has_recs and out and out.get("analysis") %}
+                <p class="meta">(Abnormal/critical variant accepted but recommendations rejected.)</p>
             {% endif %}
 
             <!-- Multi-report memory: chain another report for same patient -->
@@ -159,14 +201,14 @@
                 ("Trend vs Previous" in the summary).</p>
                 <form method="post" action="{{ url_for('run_pipeline') }}" id="chain-form">
                     <input type="hidden" name="report_text" value="">
-                    <input type="hidden" name="previous_summary" value="{{ out.summary if out else '' }}">
+                    <input type="hidden" name="previous_summary" value="{{ out.summary if out and out.summary else '' }}">
                     <div class="form-inline">
                         <select class="synth-select" id="chain-variant">
                             <option value="abnormal">Abnormal</option>
                             <option value="normal">Normal</option>
                             <option value="critical">Critical</option>
                         </select>
-                        <button type="button" class="btn btn-primary" onclick="chainReport()">Load & Run &rarr;</button>
+                        <button type="button" class="btn btn-primary" onclick="chainReport()">Load &amp; Run &rarr;</button>
                     </div>
                 </form>
                 <p class="meta" style="margin-top:12px;">

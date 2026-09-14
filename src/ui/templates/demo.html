@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guided Demo Tour — AI Clinical Report Summarization</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f5f7fa; color: #1a1a2e; }
+        .container { max-width: 800px; margin: 0 auto; }
+        h1 { font-size: 1.5rem; margin-top: 0; }
+        .card { background: white; padding: 24px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; }
+        .btn { display: inline-block; padding: 10px 24px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.95rem; font-weight: 500; text-decoration: none; }
+        .btn-primary { background: #6366f1; color: white; }
+        .btn-primary:hover { background: #4f52d6; }
+        .btn-secondary { background: #e5e7eb; color: #374151; }
+        .btn-secondary:hover { background: #d1d5db; }
+        .nav-bar { display: flex; gap: 8px; margin-bottom: 16px; }
+        .nav-bar a { text-decoration: none; }
+        .demo-card { padding: 20px; border-radius: 8px; margin-bottom: 16px; border: 1px solid #e5e7eb; }
+        .demo-card h3 { margin-top: 0; }
+        .demo-card p { margin: 8px 0; font-size: 0.9rem; line-height: 1.5; }
+        .demo-card .explanation { background: #f9fafb; padding: 12px; border-radius: 6px; font-size: 0.9rem; }
+        .demo-card .expected { font-size: 0.85rem; color: #6b7280; margin-top: 8px; }
+        .demo-normal { border-left: 4px solid #16a34a; }
+        .demo-abnormal { border-left: 4px solid #ca8a04; }
+        .demo-critical { border-left: 4px solid #dc2626; }
+        .arch-diagram { background: #f0f4ff; border: 1px solid #c7d2fe; border-radius: 8px; padding: 16px; margin: 16px 0; font-family: "SF Mono", "Fira Code", monospace; font-size: 0.8rem; line-height: 1.8; text-align: center; }
+        .arch-diagram .highlight { background: #eef2ff; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+        .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.85rem; margin: 12px 0; }
+        .legend-item { display: flex; align-items: center; gap: 4px; }
+        .legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+        .dot-normal { background: #16a34a; }
+        .dot-abnormal { background: #ca8a04; }
+        .dot-critical { background: #dc2626; }
+        .api-warning { font-size: 0.85rem; padding: 10px 14px; background: #fef3cd; border: 1px solid #fcd34d; border-radius: 6px; margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="nav-bar">
+            <a href="/" class="btn btn-secondary" style="padding:6px 14px; font-size:0.85rem;">&larr; Back to Home</a>
+        </div>
+
+        <div class="card">
+            <h1>🎯 Guided Demo Tour</h1>
+            <p>Run all three classification paths to see the full range of pipeline behavior.</p>
+
+            {% if not has_api_key %}
+            <div class="api-warning">
+                ⚠️ <strong>No API key detected.</strong> Set <code>OPENROUTER_API_KEY</code> in your
+                <code>.env</code> file before running the demo.
+            </div>
+            {% endif %}
+
+            <div class="arch-diagram">
+                <strong>Pipeline Architecture</strong><br>
+                <span class="highlight">Report Analysis</span> &rarr;
+                <span class="highlight">Classifier</span> &rarr; conditional routing &rarr;
+                <span class="highlight">Summary Agent</span> &rarr;
+                <span class="highlight">Recommendation Agent</span>
+            </div>
+
+            <div class="legend">
+                <span class="legend-item"><span class="legend-dot dot-normal"></span> Normal = early exit</span>
+                <span class="legend-item"><span class="legend-dot dot-abnormal"></span> Abnormal = full pipeline</span>
+                <span class="legend-item"><span class="legend-dot dot-critical"></span> Critical = alert + full pipeline</span>
+            </div>
+
+            <p><strong>How to use this demo:</strong> Click each card's "Run" button in order. Each run will show you the pipeline
+            status page, where you'll see the step-by-step progress and respond to any human-in-the-loop checkpoints.</p>
+        </div>
+
+        {% for key, info in reports.items() %}
+        <div class="card demo-card demo-{{ key }}">
+            <h3>{{ info.label }}</h3>
+            <div class="explanation">{{ info.explanation | safe }}</div>
+            <div class="expected">
+                <strong>What to expect:</strong>
+                {% if key == "normal" %}
+                After submitting, the classifier immediately returns &ldquo;normal&rdquo; and the pipeline exits early.
+                You&rsquo;ll see only the Analysis section — no summary, no recommendations, no HITL checkpoint.
+                {% elif key == "abnormal" %}
+                The pipeline runs fully: Analysis → Summary → HITL checkpoint (approve/reject) → Recommendations.
+                You&rsquo;ll need to click &ldquo;Approve&rdquo; on the recommendations page to see them.
+                {% elif key == "critical" %}
+                The classifier triggers a <strong>critical alert interrupt</strong>. After approving, the pipeline
+                runs Summary → another HITL checkpoint for recommendations → final output.
+                {% endif %}
+            </div>
+            <form method="post" action="/run" style="margin-top:12px;">
+                <input type="hidden" name="report_text" value="">
+                <button type="button" class="btn btn-primary" onclick="loadSynthAndSubmit(this.form, '{{ key }}')">
+                    Run {{ key | capitalize }} &rarr;
+                </button>
+            </form>
+        </div>
+        {% endfor %}
+
+        <div class="card" style="text-align:center;">
+            <h3>🤝 Multi-Report Memory</h3>
+            <p>After running the abnormal demo, the status page shows a "Chain Another Report" option.
+            Use it to run a second report for the same patient — the summary will include a
+            <strong>"Trend vs Previous"</strong> section comparing the two reports.</p>
+            <p style="font-size:0.85rem; color:#6b7280;">This demonstrates LangGraph thread state persistence and cross-report memory.</p>
+        </div>
+    </div>
+
+    <script>
+    function loadSynthAndSubmit(form, variant) {
+        fetch('/synthetic?variant=' + variant + '&raw=1')
+            .then(function(r) { return r.text(); })
+            .then(function(text) {
+                form.report_text.value = text;
+                form.submit();
+            });
+    }
+    </script>
+</body>
+</html>
