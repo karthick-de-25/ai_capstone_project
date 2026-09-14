@@ -10,32 +10,36 @@
 - [x] Create requirements.txt — pinned dependencies
 - [x] Install LangChain + LangGraph pi skills
 
-## Features (In Progress)
+## Features
 
-### Feature 1: Report Analysis Agent — Karthick
-- [ ] `.scratch/feature-report-analysis/spec.md` — spec defined
-- [ ] Synthetic clinical report data generation
-- [ ] Report Analysis agent implementation
-- [ ] Tests: parsing, error handling, classification
+### Feature 1: Report Analysis Agent — Karthick ✅
+- [x] `.scratch/feature-report-analysis/spec.md` — spec defined
+- [x] Synthetic clinical report data generation (`src/data/synthetic/report_generator.py`)
+- [x] Report Analysis agent implementation (`src/pipeline/agents/analysis.py`)
+- [x] Tests: parsing, error handling, classification (`tests/test_tools.py`, `tests/test_pipeline.py`)
 
-### Feature 2: Summary Agent — Raj
-- [ ] `.scratch/feature-summary-agent/spec.md` — spec defined
-- [ ] Summary agent implementation
-- [ ] Tests: formatting, edge cases, fallback
+### Feature 2: Summary Agent — Raj ✅
+- [x] `.scratch/feature-summary-agent/spec.md` — spec defined
+- [x] Summary agent implementation (`src/pipeline/agents/summary.py`)
+- [x] Tests: formatting, edge cases, fallback (`tests/test_pipeline.py`)
 
-### Feature 3: Recommendation Agent — Mahesh
-- [ ] `.scratch/feature-recommendation-agent/spec.md` — spec defined
-- [ ] Recommendation agent implementation
-- [ ] Tests: count, quality, error handling
+### Feature 3: Recommendation Agent — Mahesh ✅
+- [x] `.scratch/feature-recommendation-agent/spec.md` — spec defined
+- [x] Recommendation agent implementation (`src/pipeline/agents/recommendation.py`)
+- [x] Tests: count, quality, error handling (`tests/test_pipeline.py`)
 
 ### Integration
-- [ ] Connect 3 agents into LangGraph pipeline
-- [ ] Human-in-the-loop checkpoint
-- [ ] RAG pipeline with medical guideline PDFs
-- [ ] Error handling + retries
-- [ ] Logging + monitoring
+- [x] Connect 3 agents into LangGraph pipeline (`src/pipeline/pipeline.py`)
+- [x] Human-in-the-loop checkpoint (two interrupt() checkpoints: critical alert + approval gate)
+- [x] Error handling + retries (RetryPolicy on all @tasks)
+- [x] Logging (basic Python logging in all agents)
+- [x] CLI entry point with multi-report memory loop (`src/main.py`)
+- [ ] RAG pipeline with medical guideline PDFs (ADR-0002 design complete, code pending)
 - [ ] End-to-end demo script
 - [ ] Presentation materials
+
+### Housekeeping
+- [ ] Update `.scratch/*/issues/*.md` statuses from "open" to "done"
 
 ## Evaluation Criteria
 - [ ] Architecture clarity and documentation (5/25)
